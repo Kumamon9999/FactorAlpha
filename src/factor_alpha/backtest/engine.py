@@ -98,6 +98,7 @@ class BacktestEngine:
         max_weight: float = 0.10,
         long_only: bool = True,
         turnover_penalty: float = 0.001,
+        universe_selector=None,
     ):
         self.prices = prices
         self.returns = returns
@@ -110,6 +111,8 @@ class BacktestEngine:
         self.max_weight = max_weight
         self.long_only = long_only
         self.turnover_penalty = turnover_penalty
+        # Optional callable: (rebal_date, price_window, ret_window) -> [ticker, ...]
+        self.universe_selector = universe_selector
 
     def run(self) -> BacktestResult:
         rebalance_dates = self._rebalance_dates()
@@ -135,6 +138,11 @@ class BacktestEngine:
 
             # drop tickers with any NaN in the window
             valid_cols = ret_window.columns[ret_window.notna().all()]
+
+            # apply dynamic universe selection (e.g. top-N by dollar volume)
+            if self.universe_selector is not None:
+                selected = self.universe_selector(rebal_date, price_window[valid_cols], ret_window[valid_cols])
+                valid_cols = valid_cols.intersection(selected)
             ret_window = ret_window[valid_cols]
             price_window = price_window[valid_cols]
 
