@@ -1,7 +1,10 @@
+import os
 import time
 import numpy as np
 import pandas as pd
 import yfinance as yf
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from factor_alpha import (
@@ -199,6 +202,9 @@ fig.text(0.62, 0.97, ann, transform=fig.transFigure,
          bbox=dict(boxstyle="round", facecolor="lightyellow", alpha=0.8))
 
 plt.suptitle("FactorAlpha Backtest — Momentum + Low Vol (Max Sharpe)", fontsize=13)
-plt.savefig("backtest_result.png", dpi=150, bbox_inches="tight")
-plt.show()
-print("Figure saved to backtest_result.png")
+PLOT_DIR = os.path.join(os.path.dirname(__file__), "plots")
+os.makedirs(PLOT_DIR, exist_ok=True)
+out = os.path.join(PLOT_DIR, "backtest_result.png")
+plt.savefig(out, dpi=150, bbox_inches="tight")
+plt.close()
+print(f"Figure saved to {out}")

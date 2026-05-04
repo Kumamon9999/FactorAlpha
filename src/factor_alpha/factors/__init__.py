@@ -1,16 +1,39 @@
 from .base import BaseFactor
-from .momentum import MomentumFactor, ShortTermReversalFactor
-from .volatility import LowVolatilityFactor, IdiosyncraticVolatilityFactor
 from .cross_section import cross_sectional_zscore, rank_normalize, composite_score, neutralize
+from .precomputed import PrecomputedFactor
+
+# traditional statistical factors
+from .traditional import (
+    MomentumFactor,
+    ShortTermReversalFactor,
+    LowVolatilityFactor,
+    IdiosyncraticVolatilityFactor,
+)
+
+# machine learning factors
+from .ml import (
+    PCAResidualFactor,
+    RidgeAlphaFactor,
+    GradientBoostFactor,
+    RandomForestFactor,
+)
 
 __all__ = [
+    # shared
     "BaseFactor",
-    "MomentumFactor",
-    "ShortTermReversalFactor",
-    "LowVolatilityFactor",
-    "IdiosyncraticVolatilityFactor",
+    "PrecomputedFactor",
     "cross_sectional_zscore",
     "rank_normalize",
     "composite_score",
     "neutralize",
+    # traditional
+    "MomentumFactor",
+    "ShortTermReversalFactor",
+    "LowVolatilityFactor",
+    "IdiosyncraticVolatilityFactor",
+    # ml
+    "PCAResidualFactor",
+    "RidgeAlphaFactor",
+    "GradientBoostFactor",
+    "RandomForestFactor",
 ]

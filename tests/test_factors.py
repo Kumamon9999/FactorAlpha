@@ -7,6 +7,7 @@ import pytest
 from factor_alpha.factors import (
     MomentumFactor, ShortTermReversalFactor,
     LowVolatilityFactor,
+    PrecomputedFactor,
     cross_sectional_zscore, rank_normalize, composite_score,
 )
 
@@ -81,3 +82,13 @@ def test_composite_custom_weights(factor_scores):
     d = {"a": factor_scores, "b": factor_scores * 2}
     comp = composite_score(d, weights={"a": 1.0, "b": 0.0}, normalize=False)
     np.testing.assert_allclose(comp.values, factor_scores.values, atol=1e-9)
+
+
+def test_precomputed_factor_reindexes_to_returns(returns):
+    scores = returns.iloc[10:20, :5] * 0 + 1
+    factor = PrecomputedFactor("intraday_score", scores)
+    out = factor.compute(returns, returns)
+
+    assert out.shape == returns.shape
+    assert out.loc[scores.index, scores.columns].eq(1).all().all()
+    assert out.drop(index=scores.index).isna().all().all()
