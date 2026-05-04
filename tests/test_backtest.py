@@ -68,3 +68,73 @@ def test_backtest_weekly_rebalance(returns, prices):
     )
     result = engine.run()
     assert isinstance(result, BacktestResult)
+
+
+def test_backtest_integer_rebalance(returns, prices):
+    """Rebalance every 21 trading days."""
+    factors = [MomentumFactor(lookback=60, skip=5)]
+    engine = BacktestEngine(
+        prices=prices, returns=returns, factors=factors,
+        lookback=100, rebalance_freq=21,
+    )
+    result = engine.run()
+    assert isinstance(result, BacktestResult)
+
+
+def test_backtest_invalid_rebalance_raises(returns, prices):
+    factors = [MomentumFactor(lookback=60, skip=5)]
+    engine = BacktestEngine(
+        prices=prices, returns=returns, factors=factors,
+        lookback=100, rebalance_freq="quarterly",
+    )
+    with pytest.raises(ValueError):
+        engine.run()
+
+
+def test_backtest_universe_selector(returns, prices):
+    """Universe selector should narrow down tickers."""
+    factors = [LowVolatilityFactor(lookback=30)]
+
+    def top_half(date, price_win, ret_win):
+        """Keep only the first half of tickers alphabetically."""
+        return sorted(price_win.columns.tolist())[: len(price_win.columns) // 2]
+
+    engine = BacktestEngine(
+        prices=prices, returns=returns, factors=factors,
+        lookback=80, rebalance_freq="monthly",
+        universe_selector=top_half,
+    )
+    result = engine.run()
+    assert isinstance(result, BacktestResult)
+    if len(result.weights_history) > 0:
+        # universe was restricted, so max tickers held ≤ half of original
+        max_active = (result.weights_history > 1e-6).sum(axis=1).max()
+        assert max_active <= prices.shape[1] // 2 + 1
+
+
+def test_backtest_factor_tilt_mode(returns, prices):
+    factors = [MomentumFactor(lookback=60, skip=5)]
+    engine = BacktestEngine(
+        prices=prices, returns=returns, factors=factors,
+        lookback=100, optimizer_mode="factor_tilt", risk_budget=0.20,
+    )
+    result = engine.run()
+    assert isinstance(result, BacktestResult)
+
+
+def test_backtest_summary_calmar_present(returns, prices):
+    factors = [MomentumFactor(lookback=60, skip=5)]
+    engine = BacktestEngine(prices=prices, returns=returns, factors=factors, lookback=120)
+    result = engine.run()
+    assert "calmar_ratio" in result.summary()
+
+
+def test_backtest_risk_history_populated(returns, prices):
+    factors = [LowVolatilityFactor(lookback=30)]
+    engine = BacktestEngine(
+        prices=prices, returns=returns, factors=factors,
+        lookback=80, rebalance_freq="monthly",
+    )
+    result = engine.run()
+    assert len(result.risk_history) > 0
+    assert "total_vol" in result.risk_history.columns

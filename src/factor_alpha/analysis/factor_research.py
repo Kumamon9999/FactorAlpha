@@ -3,6 +3,7 @@ Factor research utilities: IC, ICIR, decay, quintile analysis, turnover.
 All methods operate on (dates × tickers) DataFrames.
 """
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Dict, List
 
@@ -60,6 +61,8 @@ class FactorResearch:
 
         method: 'spearman' (rank IC) or 'pearson'
         """
+        if method not in ("spearman", "pearson"):
+            raise ValueError(f"method must be 'spearman' or 'pearson', got '{method}'")
         fwd = self.returns.shift(-forward_period)
         rank_fn = stats.spearmanr if method == "spearman" else stats.pearsonr
 
@@ -93,11 +96,13 @@ class FactorResearch:
 
     def decay_profile(self, max_horizon: int = 20) -> pd.Series:
         """
-        Mean IC across horizons 1..max_horizon.
+        Mean IC across horizons 1..max_horizon, computed in parallel.
         A fast-decaying factor is better suited for short holding periods.
         """
-        horizons = range(1, max_horizon + 1)
-        mean_ics = {h: float(self.ic(h).mean()) for h in horizons}
+        horizons = list(range(1, max_horizon + 1))
+        # Each horizon's IC is independent — safe to compute concurrently.
+        with ThreadPoolExecutor(max_workers=min(max_horizon, 8)) as ex:
+            mean_ics = dict(zip(horizons, ex.map(lambda h: float(self.ic(h).mean()), horizons)))
         return pd.Series(mean_ics, name="mean_IC")
 
     # ------------------------------------------------------------------

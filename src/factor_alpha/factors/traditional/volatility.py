@@ -37,10 +37,20 @@ class IdiosyncraticVolatilityFactor(BaseFactor):
 
     def compute(self, prices: pd.DataFrame, returns: pd.DataFrame) -> pd.DataFrame:
         market_ret = returns.mean(axis=1)
-        beta = returns.rolling(self.lookback).cov(market_ret).div(
-            market_ret.rolling(self.lookback).var()
+        mkt_var = market_ret.rolling(self.lookback).var().replace(0, np.nan)
+
+        # DataFrame.rolling().cov(Series) produces a MultiIndex output in pandas 2.x,
+        # so we use the identity cov(X,Y) = E[XY] - E[X]*E[Y] instead.
+        cov = (
+            returns.multiply(market_ret, axis=0).rolling(self.lookback).mean()
+            - returns.rolling(self.lookback).mean().multiply(
+                market_ret.rolling(self.lookback).mean(), axis=0
+            )
         )
-        systematic_vol = beta.abs() * market_ret.rolling(self.lookback).std() * np.sqrt(252)
-        total_vol = returns.rolling(self.lookback).std() * np.sqrt(252)
-        idio = (total_vol**2 - systematic_vol**2).clip(lower=0) ** 0.5
+        beta = cov.div(mkt_var, axis=0)
+
+        mkt_vol = market_ret.rolling(self.lookback).std() * np.sqrt(252)
+        systematic_var = (beta ** 2).multiply(mkt_vol ** 2, axis=0)
+        total_var = (returns.rolling(self.lookback).std() * np.sqrt(252)) ** 2
+        idio = (total_var - systematic_var).clip(lower=0) ** 0.5
         return -idio

@@ -10,6 +10,7 @@ At each rebalance date:
 """
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
@@ -150,11 +151,16 @@ class BacktestEngine:
                 logger.warning("Too few valid tickers at %s, skipping", rebal_date)
                 continue
 
-            # 1. Compute and combine factors
-            factor_scores: Dict[str, pd.DataFrame] = {}
-            for f in self.factors:
-                raw = f.compute(price_window, ret_window)
-                factor_scores[f.name] = cross_sectional_zscore(raw.fillna(0))
+            # 1. Compute factors in parallel then z-score each.
+            # Factor.compute() only reads price/return windows (no shared writes),
+            # so concurrent execution is safe. Sklearn models release the GIL.
+            with ThreadPoolExecutor(max_workers=len(self.factors)) as ex:
+                futures = {f.name: ex.submit(f.compute, price_window, ret_window)
+                           for f in self.factors}
+            factor_scores: Dict[str, pd.DataFrame] = {
+                name: cross_sectional_zscore(fut.result().fillna(0))
+                for name, fut in futures.items()
+            }
 
             composite = composite_score(factor_scores, self.factor_weights)
             latest_scores = composite.iloc[-1].dropna()

@@ -11,7 +11,31 @@ import yfinance as yf
 logger = logging.getLogger(__name__)
 
 
-class UniverseLoader:
+class _PriceLoaderMixin:
+    """Shared get_returns and align utilities for all price loaders."""
+
+    _prices: pd.DataFrame
+
+    def get_returns(self, method: str = "log") -> pd.DataFrame:
+        """Compute daily returns. method: 'log' or 'simple'."""
+        if method == "log":
+            return np.log(self._prices / self._prices.shift(1)).iloc[1:]
+        elif method == "simple":
+            return self._prices.pct_change().iloc[1:]
+        raise ValueError(f"method must be 'log' or 'simple', got '{method}'")
+
+    def align(self, *others: pd.DataFrame) -> List[pd.DataFrame]:
+        """Align multiple DataFrames to the intersection of dates and tickers."""
+        frames = [self._prices] + list(others)
+        common_idx = frames[0].index
+        common_cols = frames[0].columns
+        for f in frames[1:]:
+            common_idx = common_idx.intersection(f.index)
+            common_cols = common_cols.intersection(f.columns)
+        return [f.loc[common_idx, common_cols] for f in frames]
+
+
+class UniverseLoader(_PriceLoaderMixin):
     """Fetches and preprocesses OHLCV data for a stock universe."""
 
     def __init__(self, tickers: List[str]):
@@ -30,14 +54,12 @@ class UniverseLoader:
             self._prices = raw["Close"].copy()
             self._volumes = raw["Volume"].copy()
         else:
-            # single ticker returned flat DataFrame
             self._prices = raw[["Close"]].rename(columns={"Close": self.tickers[0]})
             self._volumes = raw[["Volume"]].rename(columns={"Volume": self.tickers[0]})
 
         self._prices = self._prices.ffill().bfill()
         self._volumes = self._volumes.ffill().bfill()
 
-        # drop tickers with >20% missing before fill
         threshold = 0.8
         valid = self._prices.notna().mean() >= threshold
         dropped = valid[~valid].index.tolist()
@@ -60,13 +82,8 @@ class UniverseLoader:
         return self._volumes
 
     def get_returns(self, method: str = "log") -> pd.DataFrame:
-        """Compute daily returns. method: 'log' or 'simple'."""
         self._check_fetched()
-        if method == "log":
-            return np.log(self._prices / self._prices.shift(1)).iloc[1:]
-        elif method == "simple":
-            return self._prices.pct_change().iloc[1:]
-        raise ValueError(f"method must be 'log' or 'simple', got '{method}'")
+        return super().get_returns(method)
 
     def get_dollar_volume(self) -> pd.DataFrame:
         """Price × volume — proxy for liquidity."""
@@ -74,58 +91,39 @@ class UniverseLoader:
         return (self._prices * self._volumes).ffill()
 
     def align(self, *others: pd.DataFrame) -> List[pd.DataFrame]:
-        """Align multiple DataFrames to the intersection of dates and tickers."""
-        frames = [self._prices] + list(others)
-        common_idx = frames[0].index
-        common_cols = frames[0].columns
-        for f in frames[1:]:
-            common_idx = common_idx.intersection(f.index)
-            common_cols = common_cols.intersection(f.columns)
-        return [f.loc[common_idx, common_cols] for f in frames]
+        self._check_fetched()
+        return super().align(*others)
 
     def _check_fetched(self):
         if self._prices is None:
             raise RuntimeError("Call .fetch(start, end) before accessing data.")
 
 
-class CSVLoader:
+class CSVLoader(_PriceLoaderMixin):
     """
-    Loads price and (optionally) volume data from local CSV files instead of
-    downloading from Yahoo Finance.
+    Loads price and (optionally) volume data from local CSV files.
 
     Supported CSV layouts
     ---------------------
     Wide format (one column per ticker) — default:
         date,AAPL,MSFT,GOOGL,...
-        2018-01-02,172.3,85.1,1053.2,...
 
     Long format (date + ticker + value columns):
         date,ticker,close,volume
         2018-01-02,AAPL,172.3,22000000
-        2018-01-02,MSFT,85.1,18000000
 
     Parameters
     ----------
     prices_path : str
-        Path to the prices CSV file.
     volumes_path : str, optional
-        Path to the volumes CSV file (wide or long, same layout as prices).
     date_col : str
-        Name of the date column (default "date").
     ticker_col : str
-        Name of the ticker column in long format (default "ticker").
     price_col : str
-        Name of the price column in long format (default "close").
     volume_col : str
-        Name of the volume column in long format (default "volume").
-    fmt : str
-        "wide" (default) or "long".
+    fmt : str  — "wide" (default) or "long"
     start : str, optional
-        Clip data to this start date (inclusive), e.g. "2018-01-01".
     end : str, optional
-        Clip data to this end date (inclusive), e.g. "2023-12-31".
     missing_threshold : float
-        Drop tickers with more than this fraction of missing values (default 0.2).
     """
 
     def __init__(
@@ -157,10 +155,6 @@ class CSVLoader:
 
         self._load()
 
-    # ------------------------------------------------------------------
-    # Public interface (mirrors UniverseLoader)
-    # ------------------------------------------------------------------
-
     @property
     def prices(self) -> pd.DataFrame:
         return self._prices
@@ -169,39 +163,16 @@ class CSVLoader:
     def volumes(self) -> Optional[pd.DataFrame]:
         return self._volumes
 
-    def get_returns(self, method: str = "log") -> pd.DataFrame:
-        """Compute daily returns. method: 'log' or 'simple'."""
-        if method == "log":
-            return np.log(self._prices / self._prices.shift(1)).iloc[1:]
-        elif method == "simple":
-            return self._prices.pct_change().iloc[1:]
-        raise ValueError(f"method must be 'log' or 'simple', got '{method}'")
-
     def get_dollar_volume(self) -> pd.DataFrame:
         """Price × volume — proxy for liquidity. Requires volumes_path."""
         if self._volumes is None:
             raise RuntimeError("No volumes file provided to CSVLoader.")
         return (self._prices * self._volumes).ffill()
 
-    def align(self, *others: pd.DataFrame) -> List[pd.DataFrame]:
-        """Align multiple DataFrames to the intersection of dates and tickers."""
-        frames = [self._prices] + list(others)
-        common_idx = frames[0].index
-        common_cols = frames[0].columns
-        for f in frames[1:]:
-            common_idx = common_idx.intersection(f.index)
-            common_cols = common_cols.intersection(f.columns)
-        return [f.loc[common_idx, common_cols] for f in frames]
-
-    # ------------------------------------------------------------------
-    # Internal loading
-    # ------------------------------------------------------------------
-
     def _load(self):
         self._prices = self._read_csv(self.prices_path, value_col=self.price_col)
         if self.volumes_path:
             self._volumes = self._read_csv(self.volumes_path, value_col=self.volume_col)
-            # align volumes to price index/columns
             self._volumes = self._volumes.reindex(
                 index=self._prices.index, columns=self._prices.columns
             )
@@ -220,7 +191,6 @@ class CSVLoader:
         else:
             raise ValueError(f"fmt must be 'wide' or 'long', got '{self.fmt}'")
 
-        # date range clip
         if self.start:
             df = df.loc[df.index >= self.start]
         if self.end:
@@ -228,7 +198,6 @@ class CSVLoader:
 
         df = df.sort_index().ffill().bfill()
 
-        # drop tickers with too many missing values
         valid = df.notna().mean() >= (1 - self.missing_threshold)
         dropped = valid[~valid].index.tolist()
         if dropped:
@@ -236,7 +205,6 @@ class CSVLoader:
         return df.loc[:, valid]
 
     def _parse_wide(self, raw: pd.DataFrame) -> pd.DataFrame:
-        # first column is the date, rest are tickers
         date_col = self.date_col if self.date_col in raw.columns else raw.columns[0]
         df = raw.set_index(date_col)
         df.index = pd.to_datetime(df.index)
@@ -270,7 +238,7 @@ _ASHARE_COLS = {
 }
 
 
-class AShareZipLoader:
+class AShareZipLoader(_PriceLoaderMixin):
     """
     Loads A-share 5-minute bar data from per-day ZIP archives and resamples
     to daily OHLCV.
@@ -279,27 +247,17 @@ class AShareZipLoader:
     --------------------------------
     dataset_dir/
       YYYY-MM/
-        YYYYMMDD_5min.zip      ← one ZIP per trading day
-          sz000001.csv         ← one CSV per stock inside the ZIP
+        YYYYMMDD_5min.zip
+          sz000001.csv
           sh600519.csv
-          ...
-
-    Each CSV has Chinese-header columns:
-        时间, 代码, 名称, 开盘价, 收盘价, 最高价, 最低价, 成交量, 成交额, 涨幅, 振幅
 
     Parameters
     ----------
     dataset_dir : str
-        Root directory that contains the YYYY-MM sub-folders.
     tickers : list of str, optional
-        Stocks to load, e.g. ["sh600519", "sz000001"]. Loads all stocks if
-        None (slow for 5000+ stocks — recommend specifying a list).
     start : str, optional
-        First date to include, e.g. "2025-01-01".
     end : str, optional
-        Last date to include, e.g. "2025-09-30".
     missing_threshold : float
-        Drop tickers missing more than this fraction of trading days (default 0.2).
     """
 
     def __init__(
@@ -322,10 +280,6 @@ class AShareZipLoader:
 
         self._load()
 
-    # ------------------------------------------------------------------
-    # Public interface (mirrors UniverseLoader)
-    # ------------------------------------------------------------------
-
     @property
     def prices(self) -> pd.DataFrame:
         return self._prices
@@ -339,29 +293,9 @@ class AShareZipLoader:
         """Total turnover (成交额) per day — more reliable liquidity proxy than volume for A-shares."""
         return self._amounts
 
-    def get_returns(self, method: str = "log") -> pd.DataFrame:
-        if method == "log":
-            return np.log(self._prices / self._prices.shift(1)).iloc[1:]
-        elif method == "simple":
-            return self._prices.pct_change().iloc[1:]
-        raise ValueError(f"method must be 'log' or 'simple', got '{method}'")
-
     def get_dollar_volume(self) -> pd.DataFrame:
         """Daily turnover amount (成交额) — use this for liquidity screening on A-shares."""
         return self._amounts.ffill()
-
-    def align(self, *others: pd.DataFrame) -> List[pd.DataFrame]:
-        frames = [self._prices] + list(others)
-        common_idx = frames[0].index
-        common_cols = frames[0].columns
-        for f in frames[1:]:
-            common_idx = common_idx.intersection(f.index)
-            common_cols = common_cols.intersection(f.columns)
-        return [f.loc[common_idx, common_cols] for f in frames]
-
-    # ------------------------------------------------------------------
-    # Internal loading
-    # ------------------------------------------------------------------
 
     def _load(self):
         zip_paths = self._discover_zips()
@@ -372,7 +306,7 @@ class AShareZipLoader:
         daily_records: List[Dict] = []
 
         for zip_path in zip_paths:
-            date_str = os.path.basename(zip_path).split("_")[0]  # "20250901"
+            date_str = os.path.basename(zip_path).split("_")[0]
             trade_date = pd.Timestamp(date_str)
 
             if self.start and trade_date < self.start:
@@ -380,8 +314,7 @@ class AShareZipLoader:
             if self.end and trade_date > self.end:
                 continue
 
-            records = self._read_zip(zip_path, trade_date)
-            daily_records.extend(records)
+            daily_records.extend(self._read_zip(zip_path, trade_date))
 
         if not daily_records:
             raise ValueError("No data loaded — check date range and ticker list.")
@@ -420,7 +353,7 @@ class AShareZipLoader:
                     names = [n for n in names if os.path.splitext(n)[0] in ticker_set]
 
                 for fname in names:
-                    ticker = os.path.splitext(fname)[0]  # "sz000001"
+                    ticker = os.path.splitext(fname)[0]
                     try:
                         with zf.open(fname) as f:
                             df = pd.read_csv(f)
@@ -435,7 +368,6 @@ class AShareZipLoader:
                         if col in df.columns:
                             df[col] = pd.to_numeric(df[col], errors="coerce")
 
-                    # resample to single daily bar
                     rec = {
                         "date":   trade_date,
                         "ticker": ticker,
