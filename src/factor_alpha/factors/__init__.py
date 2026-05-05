@@ -18,6 +18,13 @@ from .ml import (
     RandomForestFactor,
 )
 
+# qlib-integrated factors
+from .qlib import (
+    build_alpha158_features,
+    Alpha158Factor,
+    QlibLGBFactor,
+)
+
 __all__ = [
     # shared
     "BaseFactor",
@@ -36,4 +43,8 @@ __all__ = [
     "RidgeAlphaFactor",
     "GradientBoostFactor",
     "RandomForestFactor",
+    # qlib
+    "build_alpha158_features",
+    "Alpha158Factor",
+    "QlibLGBFactor",
 ]
